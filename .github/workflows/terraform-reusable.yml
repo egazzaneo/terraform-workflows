@@ -1,0 +1,192 @@
+# Reusable Terraform Pipeline
+name: 'Reusable Terraform Pipeline'
+
+on:
+  workflow_call:
+    inputs:
+      environments_dir:
+        description: 'Directory containing environments'
+        required: false
+        type: string
+        default: 'environments'
+      terraform_version:
+        description: 'Terraform version to use'
+        required: false
+        type: string
+        default: 'latest'
+      aws_region:
+        description: 'AWS region'
+        required: true
+        type: string
+      action:
+        description: 'Action to perform'
+        required: false
+        type: string
+        default: 'plan'
+      environment:
+        description: 'Environment to target (leave empty for all)'
+        required: false
+        type: string
+    secrets:
+      AWS_ACCESS_KEY_ID:
+        required: true
+      AWS_SECRET_ACCESS_KEY:
+        required: true
+
+env:
+  TERRAFORM_VERSION: ${{ inputs.terraform_version }}
+  ENVIRONMENTS_DIR: ${{ inputs.environments_dir }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Find available environments dynamically
+  discover:
+    name: 'Discover Environments'
+    runs-on: ubuntu-latest
+    outputs:
+      environments: ${{ steps.discover.outputs.environments }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Discover Environments
+      id: discover
+      uses: ./.github/actions/discover-environments
+      with:
+        environments_dir: ${{ env.ENVIRONMENTS_DIR }}
+
+  # Validate Terraform syntax and configuration
+  terraform-validate:
+    name: 'Validate ${{ matrix.environment }}'
+    runs-on: ubuntu-latest
+    needs: discover
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ inputs.environment != '' && fromJson(format('["{0}"]', inputs.environment)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+    - name: Terraform Validate
+      run: |
+        set -e
+        terraform validate
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+  # Generate execution plan for changes
+  terraform-plan:
+    name: 'Plan ${{ matrix.environment }}'
+    runs-on: ubuntu-latest
+    needs: [discover, terraform-validate]
+    if: needs.terraform-validate.result == 'success' || needs.terraform-validate.result == 'skipped'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ inputs.environment != '' && fromJson(format('["{0}"]', inputs.environment)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+    - name: Terraform Plan
+      run: |
+        set -e
+        terraform plan -out=tfplan
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+    # Save plan for apply job
+    - name: Upload Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan-${{ matrix.environment }}
+        path: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}/tfplan
+
+  # Apply planned changes (manual only)
+  terraform-apply:
+    name: 'Apply ${{ matrix.environment }}'
+    runs-on: ubuntu-latest
+    needs: [discover, terraform-plan]
+    if: |
+      needs.terraform-plan.result == 'success' &&
+      inputs.action == 'apply'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ inputs.environment != '' && fromJson(format('["{0}"]', inputs.environment)) || fromJson(needs.discover.outputs.environments) }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # Get plan from previous job
+    - name: Download Plan
+      uses: actions/download-artifact@v4
+      with:
+        name: terraform-plan-${{ matrix.environment }}
+        path: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      run: |
+        set -e
+        terraform init -input=false
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}
+
+    - name: Terraform Apply
+      run: |
+        set -e
+        terraform apply -input=false tfplan
+      working-directory: ./${{ env.ENVIRONMENTS_DIR }}/${{ matrix.environment }}

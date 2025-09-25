@@ -1,0 +1,29 @@
+name: 'Discover Environments'
+description: 'Discover available Terraform environments'
+
+inputs:
+  environments_dir:
+    description: 'Directory containing environments'
+    required: false
+    default: 'environments'
+
+outputs:
+  environments:
+    description: 'JSON array of discovered environments'
+    value: ${{ steps.discover.outputs.environments }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Discover environments
+      id: discover
+      shell: bash
+      run: |
+        if [ -d "${{ inputs.environments_dir }}" ]; then
+          envs=$(ls -1 ${{ inputs.environments_dir }}/ | jq -R -s -c 'split("\n")[:-1]')
+          echo "environments=$envs" >> $GITHUB_OUTPUT
+          echo "Found environments: $envs"
+        else
+          echo "environments=[]" >> $GITHUB_OUTPUT
+          echo "No environments directory found"
+        fi
