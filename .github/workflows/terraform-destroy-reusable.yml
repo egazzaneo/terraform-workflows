@@ -54,9 +54,16 @@ jobs:
 
     - name: Discover Environments
       id: discover
-      uses: ./.github/actions/discover-environments
-      with:
-        environments_dir: ${{ env.ENVIRONMENTS_DIR }}
+      shell: bash
+      run: |
+        if [ -d "${{ env.ENVIRONMENTS_DIR }}" ]; then
+          envs=$(ls -1 ${{ env.ENVIRONMENTS_DIR }}/ | jq -R -s -c 'split("\n")[:-1]')
+          echo "environments=$envs" >> $GITHUB_OUTPUT
+          echo "Found environments: $envs"
+        else
+          echo "environments=[]" >> $GITHUB_OUTPUT
+          echo "No environments directory found"
+        fi
 
   # Validate Terraform before destroy
   terraform-validate:

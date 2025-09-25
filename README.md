@@ -141,12 +141,48 @@ mi-proyecto/
     └── discover-environments/ # Copia del action (si es necesario)
 ```
 
-## 🔄 Actualización
+## 🔄 Actualización y Versionado
 
-Para actualizar todos los proyectos:
-1. Modifica los workflows en `terraform-workflows`
-2. Crea un nuevo tag: `git tag v1.1.0`
-3. Los proyectos usan `@v1.1.0` en lugar de `@main`
+### Pasos para actualizar workflows:
+
+```bash
+# 1. Hacer cambios en terraform-workflows
+cd terraform-workflows
+git add .
+git commit -m "Update workflows with new features"
+
+# 2. Pushear cambios
+git push origin main
+
+# 3. Crear/actualizar tag
+git tag v1.0.0
+git push origin v1.0.0
+
+# 4. Para sobrescribir tag existente (si es necesario)
+git tag -f v1.0.0                    # Forzar tag local
+git push origin v1.0.0 --force       # Forzar push del tag
+
+# 5. Para eliminar tag (si necesitas recrearlo)
+git tag -d v1.0.0                    # Eliminar tag local
+git push origin :refs/tags/v1.0.0    # Eliminar tag remoto
+git tag v1.0.0                       # Crear nuevo tag
+git push origin v1.0.0               # Pushear nuevo tag
+```
+
+### Versionado recomendado:
+- `v1.0.0` - Versión inicial estable
+- `v1.1.0` - Nuevas características
+- `v1.0.1` - Correcciones de bugs
+- `v2.0.0` - Cambios que rompen compatibilidad
+
+### Uso en proyectos:
+```yaml
+# Usar versión específica (recomendado)
+uses: egazzaneo/terraform-workflows/.github/workflows/terraform-reusable.yml@v1.0.0
+
+# Usar rama main (no recomendado para producción)
+uses: egazzaneo/terraform-workflows/.github/workflows/terraform-reusable.yml@main
+```
 
 ## 🛡️ Seguridad
 
